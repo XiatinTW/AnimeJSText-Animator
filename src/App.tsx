@@ -19,9 +19,17 @@ function cn(...inputs: ClassValue[]) {
 
 // --- Types ---
 
+type ElementType = 'text' | 'svg' | 'shape';
+
+interface SceneElement {
+  id: string;
+  type: ElementType;
+  content: string;
+}
+
 interface AnimationConfig {
   name: string;
-  text: string;
+  elements: SceneElement[];
   duration: number;
   delay: number;
   stagger: number;
@@ -30,8 +38,10 @@ interface AnimationConfig {
   translateX: [number, number];
   translateY: [number, number];
   rotate: [number, number];
-  scale: [number, number];
+  scaleX: [number, number];
+  scaleY: [number, number];
   opacity: [number, number];
+  blur: [number, number];
   // Perspective
   perspective: number;
   background: string;
@@ -47,8 +57,10 @@ interface CharOverride {
   translateX?: [number, number];
   translateY?: [number, number];
   rotate?: [number, number];
-  scale?: [number, number];
+  scaleX?: [number, number];
+  scaleY?: [number, number];
   opacity?: [number, number];
+  blur?: [number, number];
   textColor?: string;
 }
 
@@ -56,28 +68,36 @@ const PRESETS: Record<string, Partial<AnimationConfig>> = {
   'Fade In Up': {
     translateY: [100, 0],
     opacity: [0, 1],
-    scale: [1, 1],
+    scaleX: [1, 1],
+    scaleY: [1, 1],
     rotate: [0, 0],
+    blur: [10, 0],
     easing: 'outExpo'
   },
   'Pop & Spin': {
-    scale: [0, 1],
+    scaleX: [0, 1],
+    scaleY: [0, 1],
     rotate: [-180, 0],
     opacity: [0, 1],
     translateY: [0, 0],
+    blur: [0, 0],
     easing: 'outBack'
   },
   'Side Slide': {
     translateX: [-200, 0],
     rotate: [15, 0],
     opacity: [0, 1],
-    scale: [0.8, 1],
+    scaleX: [0.8, 1],
+    scaleY: [0.8, 1],
+    blur: [0, 0],
     easing: 'outQuart'
   },
   'Elastic Drop': {
     translateY: [-300, 0],
     opacity: [0, 1],
-    scale: [1.2, 1],
+    scaleX: [1.2, 1],
+    scaleY: [1.2, 1],
+    blur: [0, 0],
     easing: 'outElastic'
   }
 };
@@ -93,7 +113,10 @@ const EASING_OPTIONS = [
 
 const DEFAULT_CONFIG: AnimationConfig = {
   name: 'Fade In Up',
-  text: 'ANIME.JS v4',
+  elements: [
+    { id: '1', type: 'text', content: 'ANIME.JS' },
+    { id: '2', type: 'shape', content: 'circle' }
+  ],
   duration: 1200,
   delay: 0,
   stagger: 150,
@@ -101,8 +124,10 @@ const DEFAULT_CONFIG: AnimationConfig = {
   translateX: [0, 0],
   translateY: [100, 0],
   rotate: [0, 0],
-  scale: [1, 1],
+  scaleX: [1, 1],
+  scaleY: [1, 1],
   opacity: [0, 1],
+  blur: [0, 0],
   perspective: 1000,
   background: '#0a0a0a',
   textColor: '#ffffff',
@@ -126,10 +151,22 @@ export default function App() {
   const containerRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
 
-  // Split text into characters
-  const characters = useMemo(() => {
-    return config.text.split('');
-  }, [config.text]);
+  // Flatten all elements into animatable units
+  const animUnits = useMemo(() => {
+    const units: { id: string; type: 'char' | 'svg'; content: string; elementId: string }[] = [];
+    config.elements.forEach(el => {
+      if (el.type === 'text') {
+        el.content.split('').forEach((char, i) => {
+          units.push({ id: `${el.id}-${i}`, type: 'char', content: char, elementId: el.id });
+        });
+      } else if (el.type === 'shape') {
+        units.push({ id: el.id, type: 'svg', content: el.content, elementId: el.id });
+      } else {
+        units.push({ id: el.id, type: 'svg', content: el.content, elementId: el.id });
+      }
+    });
+    return units;
+  }, [config.elements]);
 
   const runAnimation = (autoplay = false) => {
     if (animationRef.current) {
@@ -138,19 +175,24 @@ export default function App() {
 
     const { 
       duration, stagger: staggerVal, easing, 
-      translateX, translateY, rotate, scale, opacity 
+      translateX, translateY, rotate, scaleX, scaleY, opacity, blur
     } = config;
 
-    animationRef.current = anime('.letter', {
+    animationRef.current = anime('.anim-item', {
       translateX: (_, i) => overrides[i]?.translateX || translateX,
       translateY: (_, i) => overrides[i]?.translateY || translateY,
       rotate: (_, i) => overrides[i]?.rotate || rotate,
-      scale: (_, i) => overrides[i]?.scale || scale,
+      scaleX: (_, i) => overrides[i]?.scaleX || scaleX,
+      scaleY: (_, i) => overrides[i]?.scaleY || scaleY,
       opacity: (_, i) => overrides[i]?.opacity || opacity,
+      filter: (_, i) => {
+        const [start, end] = overrides[i]?.blur || blur;
+        return [`blur(${start}px)`, `blur(${end}px)`];
+      },
       duration: (_, i) => overrides[i]?.duration || duration,
-      delay: (_, i) => stagger(staggerVal)(null as any, i, characters.length) + (overrides[i]?.delayOffset || 0),
+      delay: (_, i) => stagger(staggerVal)(null as any, i, animUnits.length) + (overrides[i]?.delayOffset || 0),
       ease: easing,
-      autoplay, // Add this to prevent default autoplay
+      autoplay,
       onUpdate: (anim) => {
         setProgress(anim.progress * 100);
       },
@@ -198,8 +240,8 @@ export default function App() {
 
   const generateCode = () => {
     const { 
-      text, duration, stagger: staggerVal, easing, 
-      translateX, translateY, rotate, scale, opacity,
+      duration, stagger: staggerVal, easing, 
+      translateX, translateY, rotate, scaleX, scaleY, opacity, blur,
       fontSize, textColor, fontWeight, letterSpacing
     } = config;
 
@@ -209,32 +251,47 @@ export default function App() {
       ? `
 const overrides = ${JSON.stringify(overrides, null, 2)};
 
-animate('#anime-text .letter', {
+animate('#anime-scene .anim-item', {
   translateX: (el, i) => overrides[i]?.translateX || [${translateX[0]}, ${translateX[1]}],
   translateY: (el, i) => overrides[i]?.translateY || [${translateY[0]}, ${translateY[1]}],
   rotate: (el, i) => overrides[i]?.rotate || [${rotate[0]}, ${rotate[1]}],
-  scale: (el, i) => overrides[i]?.scale || [${scale[0]}, ${scale[1]}],
+  scaleX: (el, i) => overrides[i]?.scaleX || [${scaleX[0]}, ${scaleX[1]}],
+  scaleY: (el, i) => overrides[i]?.scaleY || [${scaleY[0]}, ${scaleY[1]}],
   opacity: (el, i) => overrides[i]?.opacity || [${opacity[0]}, ${opacity[1]}],
+  filter: (el, i) => {
+    const b = overrides[i]?.blur || [${blur[0]}, ${blur[1]}];
+    return [\`blur(\${b[0]}px)\`, \`blur(\${b[1]}px)\`];
+  },
   duration: (el, i) => overrides[i]?.duration || ${duration},
   delay: (el, i) => (i * ${staggerVal}) + (overrides[i]?.delayOffset || 0),
   ease: '${easing}'
 });`
       : `
-animate('#anime-text .letter', {
+animate('#anime-scene .anim-item', {
   translateX: [${translateX[0]}, ${translateX[1]}],
   translateY: [${translateY[0]}, ${translateY[1]}],
   rotate: [${rotate[0]}, ${rotate[1]}],
-  scale: [${scale[0]}, ${scale[1]}],
+  scaleX: [${scaleX[0]}, ${scaleX[1]}],
+  scaleY: [${scaleY[0]}, ${scaleY[1]}],
   opacity: [${opacity[0]}, ${opacity[1]}],
+  filter: [\`blur(${blur[0]}px)\`, \`blur(${blur[1]}px)\`],
   duration: ${duration},
   delay: stagger(${staggerVal}),
   ease: '${easing}'
 });`;
 
+    const htmlContent = animUnits.map(unit => {
+      if (unit.type === 'char') {
+        return `<span class="anim-item letter" style="display: inline-block;">${unit.content === ' ' ? '&nbsp;' : unit.content}</span>`;
+      } else {
+        return `<div class="anim-item shape" style="display: inline-block; width: 1em; height: 1em;">${getShapeSvg(unit.content)}</div>`;
+      }
+    }).join('\n  ');
+
     return `
 // HTML
-<div id="anime-text" style="font-size: ${fontSize}px; font-weight: ${fontWeight}; letter-spacing: ${letterSpacing}px; color: ${textColor}; display: flex; overflow: hidden;">
-  ${text.split('').map(char => `<span class="letter" style="display: inline-block;">${char === ' ' ? '&nbsp;' : char}</span>`).join('\n  ')}
+<div id="anime-scene" style="font-size: ${fontSize}px; font-weight: ${fontWeight}; letter-spacing: ${letterSpacing}px; color: ${textColor}; display: flex; align-items: center; gap: 0.2em;">
+  ${htmlContent}
 </div>
 
 // JavaScript (requires anime.js v4)
@@ -244,7 +301,7 @@ ${jsCode}
   };
 
   return (
-    <div className="min-h-screen bg-neutral-950 text-neutral-200 font-sans selection:bg-indigo-500/30 flex flex-col overflow-hidden">
+    <div className="h-screen bg-neutral-950 text-neutral-200 font-sans selection:bg-indigo-500/30 flex flex-col overflow-hidden">
       {/* Header */}
       <header className="h-16 border-b border-neutral-800 flex items-center justify-between px-6 bg-neutral-900/50 backdrop-blur-md sticky top-0 z-50">
         <div className="flex items-center gap-3">
@@ -314,17 +371,95 @@ ${jsCode}
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold">Content</label>
-                  <textarea
-                    value={config.text}
-                    onChange={(e) => setConfig({ ...config, text: e.target.value })}
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all h-24 resize-none"
-                    placeholder="Enter text..."
-                  />
+                <div className="space-y-4 pt-4 border-t border-neutral-800">
+                  <div className="flex items-center justify-between">
+                    <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold">Scene Elements</label>
+                    <div className="flex gap-1">
+                      <button 
+                        onClick={() => setConfig({ ...config, elements: [...config.elements, { id: Date.now().toString(), type: 'text', content: 'TEXT' }] })}
+                        className="p-1 px-2 bg-neutral-800 hover:bg-neutral-700 rounded text-[9px] font-bold text-neutral-300 transition-colors"
+                      >
+                        + TEXT
+                      </button>
+                      <button 
+                         onClick={() => setConfig({ ...config, elements: [...config.elements, { id: Date.now().toString(), type: 'shape', content: 'circle' }] })}
+                        className="p-1 px-2 bg-neutral-800 hover:bg-neutral-700 rounded text-[9px] font-bold text-neutral-300 transition-colors"
+                      >
+                        + SHAPE
+                      </button>
+                      <button 
+                         onClick={() => setConfig({ ...config, elements: [...config.elements, { id: Date.now().toString(), type: 'svg', content: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 22 12 18.27 5.82 22 7 14.14l-5-4.87 6.91-1.01L12 2z"/></svg>' }] })}
+                        className="p-1 px-2 bg-neutral-800 hover:bg-neutral-700 rounded text-[9px] font-bold text-neutral-300 transition-colors"
+                      >
+                        + SVG
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3 max-h-64 overflow-y-auto pr-2 custom-scrollbar">
+                    {config.elements.map((el, i) => (
+                      <div key={el.id} className="bg-neutral-800/50 rounded-xl p-3 border border-neutral-800 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold text-neutral-600 uppercase tracking-tighter">Layer {i+1} • {el.type}</span>
+                          <button 
+                            onClick={() => {
+                              const newElements = [...config.elements];
+                              newElements.splice(i, 1);
+                              setConfig({ ...config, elements: newElements });
+                            }}
+                            className="text-xs text-red-500/50 hover:text-red-500"
+                          >
+                            ×
+                          </button>
+                        </div>
+                        
+                        {el.type === 'text' && (
+                          <textarea
+                            value={el.content}
+                            onChange={(e) => {
+                              const newElements = [...config.elements];
+                              newElements[i].content = e.target.value;
+                              setConfig({ ...config, elements: newElements });
+                            }}
+                            className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-indigo-500 outline-none h-12 resize-none"
+                          />
+                        )}
+
+                        {el.type === 'shape' && (
+                          <select
+                            value={el.content}
+                            onChange={(e) => {
+                              const newElements = [...config.elements];
+                              newElements[i].content = e.target.value;
+                              setConfig({ ...config, elements: newElements });
+                            }}
+                            className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-xs outline-none"
+                          >
+                            <option value="circle">Circle</option>
+                            <option value="square">Square</option>
+                            <option value="triangle">Triangle</option>
+                            <option value="star">Star</option>
+                          </select>
+                        )}
+
+                        {el.type === 'svg' && (
+                          <textarea
+                            value={el.content}
+                            onChange={(e) => {
+                              const newElements = [...config.elements];
+                              newElements[i].content = e.target.value;
+                              setConfig({ ...config, elements: newElements });
+                            }}
+                            className="w-full bg-neutral-900 border border-neutral-800 rounded-lg px-3 py-2 text-[9px] font-mono focus:ring-1 focus:ring-indigo-500 outline-none h-20 resize-none overflow-x-auto whitespace-pre"
+                            placeholder="Paste <svg> tag here..."
+                          />
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
                 
-                <div className="space-y-2">
+                <div className="space-y-2 pt-4 border-t border-neutral-800">
                   <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold">Easing Function</label>
                   <select 
                     value={config.easing}
@@ -376,16 +511,29 @@ ${jsCode}
                   unit="°"
                 />
                 <RangeControl 
-                  label="Scale" 
-                  values={config.scale} 
+                  label="Scale X" 
+                  values={config.scaleX} 
                   min={0} max={3} step={0.1}
-                  onChange={v => setConfig({...config, scale: v})} 
+                  onChange={v => setConfig({...config, scaleX: v})} 
+                />
+                <RangeControl 
+                  label="Scale Y" 
+                  values={config.scaleY} 
+                  min={0} max={3} step={0.1}
+                  onChange={v => setConfig({...config, scaleY: v})} 
                 />
                 <RangeControl 
                   label="Opacity" 
                   values={config.opacity} 
                   min={0} max={1} step={0.1}
                   onChange={v => setConfig({...config, opacity: v})} 
+                />
+                <RangeControl 
+                  label="Blur Filter" 
+                  values={config.blur} 
+                  min={0} max={40} 
+                  onChange={v => setConfig({...config, blur: v})} 
+                  unit="px"
                 />
                 <ControlSlider 
                   label="Perspective" 
@@ -471,7 +619,10 @@ ${jsCode}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <span className="w-8 h-8 bg-indigo-500/20 rounded flex items-center justify-center text-xs font-bold text-indigo-400 border border-indigo-500/30">
-                          {characters[selectedIdx] === ' ' ? '_' : characters[selectedIdx]}
+                          {animUnits[selectedIdx]?.type === 'char' 
+                            ? (animUnits[selectedIdx].content === ' ' ? '_' : animUnits[selectedIdx].content)
+                            : 'SVG'
+                          }
                         </span>
                         <span className="text-[10px] text-neutral-400 font-medium">Index {selectedIdx}</span>
                       </div>
@@ -524,12 +675,19 @@ ${jsCode}
                       onChange={v => setOverrides({ ...overrides, [selectedIdx]: { ...overrides[selectedIdx], rotate: v } })} 
                       unit="°"
                     />
+                    
+                    <RangeControl 
+                      label="Individual Scale X" 
+                      values={overrides[selectedIdx]?.scaleX || config.scaleX} 
+                      min={0} max={3} step={0.1}
+                      onChange={v => setOverrides({ ...overrides, [selectedIdx]: { ...overrides[selectedIdx], scaleX: v } })} 
+                    />
 
                     <RangeControl 
-                      label="Individual Scale" 
-                      values={overrides[selectedIdx]?.scale || config.scale} 
+                      label="Individual Scale Y" 
+                      values={overrides[selectedIdx]?.scaleY || config.scaleY} 
                       min={0} max={3} step={0.1}
-                      onChange={v => setOverrides({ ...overrides, [selectedIdx]: { ...overrides[selectedIdx], scale: v } })} 
+                      onChange={v => setOverrides({ ...overrides, [selectedIdx]: { ...overrides[selectedIdx], scaleY: v } })} 
                     />
 
                     <RangeControl 
@@ -537,6 +695,14 @@ ${jsCode}
                       values={overrides[selectedIdx]?.opacity || config.opacity} 
                       min={0} max={1} step={0.1}
                       onChange={v => setOverrides({ ...overrides, [selectedIdx]: { ...overrides[selectedIdx], opacity: v } })} 
+                    />
+
+                    <RangeControl 
+                      label="Individual Blur" 
+                      values={overrides[selectedIdx]?.blur || config.blur} 
+                      min={0} max={40} 
+                      onChange={v => setOverrides({ ...overrides, [selectedIdx]: { ...overrides[selectedIdx], blur: v } })} 
+                      unit="px"
                     />
 
                     <div className="space-y-2">
@@ -587,7 +753,7 @@ ${jsCode}
           >
             <div 
               ref={textRef}
-              className="flex tracking-tight"
+              className="flex items-center flex-wrap justify-center gap-[0.2em] tracking-tight"
               style={{ 
                 fontSize: `${config.fontSize}px`, 
                 fontWeight: config.fontWeight,
@@ -596,24 +762,31 @@ ${jsCode}
                 perspective: `${config.perspective}px`
               }}
             >
-              {characters.map((char, i) => (
-                <span 
-                  key={i} 
+              {animUnits.map((unit, i) => (
+                <div 
+                  key={unit.id} 
                   onClick={() => {
                     setSelectedIdx(i);
                     setActiveTab('individual');
                   }}
                   className={cn(
-                    "letter inline-block cursor-pointer transition-shadow rounded px-1",
+                    "anim-item inline-flex items-center justify-center cursor-pointer transition-shadow rounded px-1",
                     selectedIdx === i ? "ring-2 ring-indigo-500 shadow-[0_0_20px_rgba(99,102,241,0.4)]" : "hover:bg-indigo-500/10"
                   )}
                   style={{ 
                     whiteSpace: 'pre',
-                    color: overrides[i]?.textColor || config.textColor
+                    color: overrides[i]?.textColor || config.textColor,
+                    width: unit.type === 'svg' ? '1em' : 'auto',
+                    height: unit.type === 'svg' ? '1em' : 'auto',
                   }}
                 >
-                  {char}
-                </span>
+                  {unit.type === 'char' ? unit.content : (
+                    <div 
+                      className="w-full h-full"
+                      dangerouslySetInnerHTML={{ __html: getShapeSvg(unit.content) }} 
+                    />
+                  )}
+                </div>
               ))}
             </div>
           </div>
@@ -660,19 +833,18 @@ ${jsCode}
               </div>
             </div>
 
-            <div className="flex-1 overflow-x-auto overflow-y-hidden custom-scrollbar bg-neutral-950/20 pt-4">
+            <div className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar bg-neutral-950/20 pt-4">
               <div className="px-6 min-w-max">
                  <div className="space-y-1">
                     {/* Character Tracks Visualization */}
-                    {characters.map((char, i) => {
+                    {animUnits.map((unit, i) => {
                       const charDuration = overrides[i]?.duration || config.duration;
                       const charDelay = i * config.stagger + (overrides[i]?.delayOffset || 0);
-                      const charTotalDuration = charDelay + charDuration;
                       const maxViewDuration = 5000;
                       
                       return (
                         <div 
-                          key={i} 
+                          key={unit.id} 
                           onClick={() => {
                             setSelectedIdx(i);
                             setActiveTab('individual');
@@ -686,7 +858,7 @@ ${jsCode}
                             "w-4 text-[9px] font-mono text-center transition-colors",
                             selectedIdx === i ? "text-indigo-400 font-bold" : "text-neutral-600"
                           )}>
-                            {char === ' ' ? '_' : char}
+                            {unit.type === 'char' ? (unit.content === ' ' ? '_' : unit.content) : '■'}
                           </span>
                           <div className="relative w-[600px] h-2 bg-neutral-800/50 rounded-full overflow-hidden border border-neutral-800">
                             <div 
@@ -707,7 +879,7 @@ ${jsCode}
                               )}
                               style={{ 
                                 left: `${(charDelay / maxViewDuration) * 100}%`,
-                                width: `${Math.max(0, Math.min(1, ( (progress/100 * (config.duration + (characters.length - 1) * config.stagger)) - charDelay) / charDuration)) * (charDuration / maxViewDuration) * 100}%`
+                                width: `${Math.max(0, Math.min(1, ( (progress/100 * (config.duration + (animUnits.length - 1) * config.stagger)) - charDelay) / charDuration)) * (charDuration / maxViewDuration) * 100}%`
                               }}
                             />
                           </div>
@@ -811,9 +983,43 @@ ${jsCode}
         input[type="number"] {
           -moz-appearance: textfield;
         }
+        /* Custom Scrollbar Styles */
+        ::-webkit-scrollbar {
+          width: 6px;
+          height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+          background: #333;
+          border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+          background: #4f46e5;
+        }
+        /* For Firefox */
+        * {
+          scrollbar-width: thin;
+          scrollbar-color: #333 transparent;
+        }
       `}</style>
     </div>
   );
+}
+
+// --- Helpers ---
+
+function getShapeSvg(content: string) {
+  if (content.trim().startsWith('<svg')) return content;
+  
+  const shapes: Record<string, string> = {
+    circle: '<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="45" fill="currentColor"/></svg>',
+    square: '<svg viewBox="0 0 100 100"><rect x="10" y="10" width="80" height="80" fill="currentColor"/></svg>',
+    triangle: '<svg viewBox="0 0 100 100"><path d="M50 10 L90 90 L10 90 Z" fill="currentColor"/></svg>',
+    star: '<svg viewBox="0 0 100 100"><path d="M50 5 L63 38 L98 38 L70 59 L81 92 L50 72 L19 92 L30 59 L2 38 L37 38 Z" fill="currentColor"/></svg>'
+  };
+  return shapes[content] || shapes.circle;
 }
 
 function ControlSlider({ 
