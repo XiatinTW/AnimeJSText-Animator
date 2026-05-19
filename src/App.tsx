@@ -150,6 +150,7 @@ export default function App() {
       duration: (_, i) => overrides[i]?.duration || duration,
       delay: (_, i) => stagger(staggerVal)(null as any, i, characters.length) + (overrides[i]?.delayOffset || 0),
       ease: easing,
+      autoplay, // Add this to prevent default autoplay
       onUpdate: (anim) => {
         setProgress(anim.progress * 100);
       },
@@ -158,21 +159,14 @@ export default function App() {
       }
     });
 
-    if (autoplay) {
-      animationRef.current.play();
-      setIsPlaying(true);
-    } else {
+    if (!autoplay) {
       animationRef.current.seek(animationRef.current.duration * (progress / 100));
-      setIsPlaying(false);
     }
   };
 
   useEffect(() => {
-    // Determine if we should autoplay. 
-    // If it was already playing, keep it playing.
-    // If it's a first load, maybe autoplay.
-    const shouldAutoplay = progress === 0 && isPlaying;
-    runAnimation(shouldAutoplay);
+    // Maintain the existing playing state when config or overrides change
+    runAnimation(isPlaying);
   }, [config, overrides]);
 
   const togglePlay = () => {
@@ -758,7 +752,7 @@ ${jsCode}
                   Copy to Clipboard
                 </button>
               </div>
-              <div className="bg-black rounded-xl p-4 overflow-x-auto border border-white/5">
+              <div className="bg-black rounded-xl p-4 overflow-x-auto border border-white/5 max-h-[50vh]">
                 <pre className="text-xs font-mono text-indigo-300/90 leading-relaxed">
                   <code>{generateCode()}</code>
                 </pre>
