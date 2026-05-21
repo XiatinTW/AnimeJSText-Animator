@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { animate as anime, stagger, type JSAnimation } from 'animejs';
 import { 
   Play, Pause, RotateCcw, Download, Copy, Settings2, 
   Type, Move, Sparkles, Sliders, ChevronDown, ChevronUp,
-  Monitor, Smartphone, Tablet
+  Repeat
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -114,8 +114,8 @@ const EASING_OPTIONS = [
 const DEFAULT_CONFIG: AnimationConfig = {
   name: 'Fade In Up',
   elements: [
-    { id: '1', type: 'text', content: 'ANIME.JS' },
-    { id: '2', type: 'shape', content: 'circle' }
+    { id: '1', type: 'text', content: 'Hello World' },
+    { id: '2', type: 'shape', content: 'star' }
   ],
   duration: 1200,
   delay: 0,
@@ -143,6 +143,7 @@ export default function App() {
   const [overrides, setOverrides] = useState<Record<number, CharOverride>>({});
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const [isPlaying, setIsPlaying] = useState(true);
+  const [isLooping, setIsLooping] = useState(false);
   const [progress, setProgress] = useState(0);
   const [showExport, setShowExport] = useState(false);
   const [activeTab, setActiveTab] = useState<'text' | 'transform' | 'style' | 'individual'>('text');
@@ -150,6 +151,59 @@ export default function App() {
   const animationRef = useRef<JSAnimation | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
+
+  const [timelineHeight, setTimelineHeight] = useState(192); // default h-48 = 192px
+  const isDragging = useRef(false);
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    const startY = e.clientY;
+    const startHeight = timelineHeight;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      if (!isDragging.current) return;
+      const deltaY = moveEvent.clientY - startY;
+      const newHeight = Math.max(120, Math.min(600, startHeight - deltaY));
+      setTimelineHeight(newHeight);
+    };
+
+    const handleMouseUp = () => {
+      isDragging.current = false;
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+    document.body.style.cursor = 'ns-resize';
+    document.body.style.userSelect = 'none';
+  }, [timelineHeight]);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    isDragging.current = true;
+    const touch = e.touches[0];
+    const startY = touch.clientY;
+    const startHeight = timelineHeight;
+
+    const handleTouchMove = (moveEvent: TouchEvent) => {
+      if (!isDragging.current) return;
+      const deltaY = moveEvent.touches[0].clientY - startY;
+      const newHeight = Math.max(120, Math.min(600, startHeight - deltaY));
+      setTimelineHeight(newHeight);
+    };
+
+    const handleTouchEnd = () => {
+      isDragging.current = false;
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', handleTouchEnd);
+    };
+
+    document.addEventListener('touchmove', handleTouchMove, { passive: false });
+    document.addEventListener('touchend', handleTouchEnd);
+  }, [timelineHeight]);
 
   // Flatten all elements into animatable units
   const animUnits = useMemo(() => {
@@ -167,6 +221,21 @@ export default function App() {
     });
     return units;
   }, [config.elements]);
+
+  // Compute the absolute total duration of the timeline based on all element delays and individual durations
+  const actualTotalDuration = useMemo(() => {
+    if (animUnits.length === 0) return config.duration;
+    let maxEndTime = 0;
+    animUnits.forEach((_, i) => {
+      const charDuration = overrides[i]?.duration || config.duration;
+      const charDelay = i * config.stagger + (overrides[i]?.delayOffset || 0);
+      const endTime = charDelay + charDuration;
+      if (endTime > maxEndTime) {
+        maxEndTime = endTime;
+      }
+    });
+    return maxEndTime;
+  }, [animUnits, config.duration, config.stagger, overrides]);
 
   const runAnimation = (autoplay = false) => {
     if (animationRef.current) {
@@ -193,11 +262,14 @@ export default function App() {
       delay: (_, i) => stagger(staggerVal)(null as any, i, animUnits.length) + (overrides[i]?.delayOffset || 0),
       ease: easing,
       autoplay,
+      loop: isLooping,
       onUpdate: (anim) => {
         setProgress(anim.progress * 100);
       },
       onComplete: () => {
-        setIsPlaying(false);
+        if (!isLooping) {
+          setIsPlaying(false);
+        }
       }
     });
 
@@ -209,7 +281,7 @@ export default function App() {
   useEffect(() => {
     // Maintain the existing playing state when config or overrides change
     runAnimation(isPlaying);
-  }, [config, overrides]);
+  }, [config, overrides, isLooping]);
 
   const togglePlay = () => {
     if (!animationRef.current) return;
@@ -264,7 +336,8 @@ animate('#anime-scene .anim-item', {
   },
   duration: (el, i) => overrides[i]?.duration || ${duration},
   delay: (el, i) => (i * ${staggerVal}) + (overrides[i]?.delayOffset || 0),
-  ease: '${easing}'
+  ease: '${easing}',
+  loop: ${isLooping}
 });`
       : `
 animate('#anime-scene .anim-item', {
@@ -277,7 +350,8 @@ animate('#anime-scene .anim-item', {
   filter: [\`blur(${blur[0]}px)\`, \`blur(${blur[1]}px)\`],
   duration: ${duration},
   delay: stagger(${staggerVal}),
-  ease: '${easing}'
+  ease: '${easing}',
+  loop: ${isLooping}
 });`;
 
     const htmlContent = animUnits.map(unit => {
@@ -351,27 +425,59 @@ ${jsCode}
           <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
             {activeTab === 'text' && (
               <div className="space-y-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold">Presets</label>
-                  <div className="grid grid-cols-2 gap-2">
-                    {Object.keys(PRESETS).map(presetName => (
-                      <button
-                        key={presetName}
-                        onClick={() => setConfig({ ...config, ...PRESETS[presetName], name: presetName })}
-                        className={cn(
-                          "px-3 py-2 text-[10px] rounded-lg border transition-all text-center",
-                          config.name === presetName 
-                            ? "bg-indigo-500/10 border-indigo-500/50 text-indigo-400" 
-                            : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:border-neutral-600"
-                        )}
-                      >
-                        {presetName}
-                      </button>
-                    ))}
+                {/* Animation Settings (Grouped Together) */}
+                <div className="space-y-6">
+                  <div className="space-y-2">
+                    <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold">Presets</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {Object.keys(PRESETS).map(presetName => (
+                        <button
+                          key={presetName}
+                          onClick={() => setConfig({ ...config, ...PRESETS[presetName], name: presetName })}
+                          className={cn(
+                            "px-3 py-2 text-[10px] rounded-lg border transition-all text-center",
+                            config.name === presetName 
+                              ? "bg-indigo-500/10 border-indigo-500/50 text-indigo-400" 
+                              : "bg-neutral-800 border-neutral-700 text-neutral-400 hover:border-neutral-600"
+                          )}
+                        >
+                          {presetName}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-2 pt-4 border-t border-neutral-800/60">
+                    <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold">Easing Function</label>
+                    <select 
+                      value={config.easing}
+                      onChange={(e) => setConfig({ ...config, easing: e.target.value })}
+                      className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm outline-none cursor-pointer hover:border-neutral-600 transition-colors"
+                    >
+                      {EASING_OPTIONS.map(e => <option key={e} value={e}>{e}</option>)}
+                    </select>
+                  </div>
+
+                  <div className="space-y-4">
+                     <ControlSlider 
+                      label="Duration" 
+                      value={config.duration} 
+                      min={200} max={3000} stepped 
+                      onChange={v => setConfig({...config, duration: v})} 
+                      unit="ms"
+                    />
+                    <ControlSlider 
+                      label="Stagger" 
+                      value={config.stagger} 
+                      min={0} max={1000} stepped 
+                      onChange={v => setConfig({...config, stagger: v})} 
+                      unit="ms"
+                    />
                   </div>
                 </div>
 
-                <div className="space-y-4 pt-4 border-t border-neutral-800">
+                {/* Scene Elements */}
+                <div className="space-y-4 pt-6 border-t border-neutral-800">
                   <div className="flex items-center justify-between">
                     <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold">Scene Elements</label>
                     <div className="flex gap-1">
@@ -457,34 +563,6 @@ ${jsCode}
                       </div>
                     ))}
                   </div>
-                </div>
-                
-                <div className="space-y-2 pt-4 border-t border-neutral-800">
-                  <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold">Easing Function</label>
-                  <select 
-                    value={config.easing}
-                    onChange={(e) => setConfig({ ...config, easing: e.target.value })}
-                    className="w-full bg-neutral-800 border border-neutral-700 rounded-lg px-3 py-2 text-sm outline-none cursor-pointer hover:border-neutral-600 transition-colors"
-                  >
-                    {EASING_OPTIONS.map(e => <option key={e} value={e}>{e}</option>)}
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                   <ControlSlider 
-                    label="Duration" 
-                    value={config.duration} 
-                    min={200} max={3000} stepped 
-                    onChange={v => setConfig({...config, duration: v})} 
-                    unit="ms"
-                  />
-                  <ControlSlider 
-                    label="Stagger" 
-                    value={config.stagger} 
-                    min={0} max={1000} stepped 
-                    onChange={v => setConfig({...config, stagger: v})} 
-                    unit="ms"
-                  />
                 </div>
               </div>
             )}
@@ -737,15 +815,6 @@ ${jsCode}
 
         {/* Main Workspace */}
         <div className="flex-1 flex flex-col bg-neutral-950 relative overflow-hidden">
-          {/* Work Area Controls */}
-          <div className="h-12 border-b border-neutral-800 flex items-center justify-center gap-6 px-4 bg-neutral-900/40">
-             <div className="flex items-center gap-1 bg-neutral-800/50 p-1 rounded-lg">
-                <button className="p-1.5 hover:bg-neutral-700 rounded transition-colors text-indigo-400"><Monitor className="w-4 h-4" /></button>
-                <button className="p-1.5 hover:bg-neutral-700 rounded transition-colors text-neutral-500"><Tablet className="w-4 h-4" /></button>
-                <button className="p-1.5 hover:bg-neutral-700 rounded transition-colors text-neutral-500"><Smartphone className="w-4 h-4" /></button>
-             </div>
-          </div>
-
           {/* Canvas */}
           <div 
             className="flex-1 flex items-center justify-center p-8 transition-colors duration-500"
@@ -791,8 +860,23 @@ ${jsCode}
             </div>
           </div>
 
+          {/* Resize Handle / Bar Divider */}
+          <div 
+            onMouseDown={handleMouseDown}
+            onTouchStart={handleTouchStart}
+            className="h-1 bg-neutral-800/80 hover:bg-indigo-500 cursor-ns-resize transition-colors relative z-20 flex items-center justify-center select-none group"
+            title="Drag to resize timeline"
+          >
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="w-12 h-[2px] bg-indigo-300 rounded-full shadow-[0_0_8px_rgba(99,102,241,1)]" />
+            </div>
+          </div>
+
           {/* Timeline Bar */}
-          <div className="h-48 border-t border-neutral-800 bg-neutral-900 flex flex-col">
+          <div 
+            style={{ height: `${timelineHeight}px` }}
+            className="border-t border-neutral-800 bg-neutral-900 flex flex-col shrink-0"
+          >
             <div className="h-10 border-b border-neutral-800 flex items-center px-6 gap-6">
               <div className="flex items-center gap-2">
                  <button 
@@ -809,6 +893,18 @@ ${jsCode}
                   className="p-1.5 hover:bg-neutral-800 rounded-full transition-colors text-neutral-400"
                 >
                   <RotateCcw className="w-4 h-4" />
+                </button>
+                <button 
+                  onClick={() => setIsLooping(!isLooping)}
+                  className={cn(
+                    "p-1.5 rounded-full transition-all flex items-center justify-center",
+                    isLooping 
+                      ? "text-indigo-400 bg-indigo-500/15 hover:bg-indigo-500/25 shadow-[0_0_12px_rgba(99,102,241,0.2)]" 
+                      : "text-neutral-400 hover:bg-neutral-800"
+                  )}
+                  title={isLooping ? "Loop On" : "Loop Off"}
+                >
+                  <Repeat className="w-4 h-4" />
                 </button>
               </div>
 
@@ -827,8 +923,8 @@ ${jsCode}
                     className="w-full h-1 bg-neutral-700 rounded-lg appearance-none cursor-pointer focus:outline-none accent-indigo-500 accent-height-4"
                   />
                 </div>
-                <span className="text-[10px] font-mono text-neutral-500">
-                  {config.duration}ms
+                <span className="text-[10px] font-mono text-neutral-500 whitespace-nowrap min-w-[90px] text-right">
+                  {Math.round((progress / 100) * actualTotalDuration)}ms / {Math.round(actualTotalDuration)}ms
                 </span>
               </div>
             </div>
@@ -840,7 +936,7 @@ ${jsCode}
                     {animUnits.map((unit, i) => {
                       const charDuration = overrides[i]?.duration || config.duration;
                       const charDelay = i * config.stagger + (overrides[i]?.delayOffset || 0);
-                      const maxViewDuration = 5000;
+                      const maxViewDuration = actualTotalDuration;
                       
                       return (
                         <div 
@@ -879,7 +975,7 @@ ${jsCode}
                               )}
                               style={{ 
                                 left: `${(charDelay / maxViewDuration) * 100}%`,
-                                width: `${Math.max(0, Math.min(1, ( (progress/100 * (config.duration + (animUnits.length - 1) * config.stagger)) - charDelay) / charDuration)) * (charDuration / maxViewDuration) * 100}%`
+                                width: `${Math.max(0, Math.min(1, ( (progress/100 * actualTotalDuration) - charDelay) / charDuration)) * (charDuration / maxViewDuration) * 100}%`
                               }}
                             />
                           </div>
@@ -1031,9 +1127,9 @@ function ControlSlider({
   
   return (
     <div className="space-y-3">
-      <div className="flex justify-between items-center">
-        <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold">{label}</label>
-        <div className="flex items-center gap-1.5 bg-neutral-800 rounded px-1.5 py-0.5 border border-neutral-700">
+      <div className="flex justify-between items-center gap-4">
+        <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold shrink-0">{label}</label>
+        <div className="flex items-center gap-1.5 bg-neutral-800 rounded px-1.5 py-0.5 border border-neutral-700 shrink-0">
           <input 
             type="number"
             value={value}
@@ -1069,25 +1165,25 @@ function RangeControl({
     <div className="space-y-3 bg-neutral-800/30 p-3 rounded-xl border border-neutral-800 transition-all hover:border-neutral-700">
       <button 
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex justify-between items-center group"
+        className="w-full flex justify-between items-center gap-4 group"
       >
-        <div className="flex flex-col items-start gap-0.5">
-          <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold group-hover:text-neutral-400 transition-colors uppercase">{label}</label>
+        <div className="flex flex-col items-start gap-0.5 min-w-0">
+          <label className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold group-hover:text-neutral-400 transition-colors uppercase truncate w-full text-left">{label}</label>
           <div className="flex items-center gap-2 text-[11px] font-mono">
             <span className="text-neutral-400">{values[0]}{unit}</span>
             <span className="text-neutral-600">→</span>
             <span className="text-indigo-400">{values[1]}{unit}</span>
           </div>
         </div>
-        <ChevronDown className={cn("w-4 h-4 text-neutral-500 transition-transform", isExpanded && "rotate-180")} />
+        <ChevronDown className={cn("w-4 h-4 text-neutral-500 transition-transform shrink-0", isExpanded && "rotate-180")} />
       </button>
       
       {isExpanded && (
         <div className="space-y-4 pt-2 animate-in slide-in-from-top-1 duration-200 border-t border-neutral-800/50 mt-2">
           <div className="space-y-2">
-            <div className="flex justify-between items-center text-[9px] text-neutral-500 uppercase font-medium">
-              <span>Start State</span>
-              <div className="flex items-center gap-1 bg-neutral-800 rounded px-1.5 py-0.5 border border-neutral-700">
+            <div className="flex justify-between items-center gap-3 text-[9px] text-neutral-500 uppercase font-medium">
+              <span className="shrink-0">Start State</span>
+              <div className="flex items-center gap-1 bg-neutral-800 rounded px-1.5 py-0.5 border border-neutral-700 shrink-0">
                 <input 
                   type="number"
                   value={values[0]}
@@ -1109,9 +1205,9 @@ function RangeControl({
             />
           </div>
           <div className="space-y-2">
-            <div className="flex justify-between items-center text-[9px] text-neutral-500 uppercase font-medium">
-              <span>End State</span>
-              <div className="flex items-center gap-1 bg-neutral-800 rounded px-1.5 py-0.5 border border-neutral-700">
+            <div className="flex justify-between items-center gap-3 text-[9px] text-neutral-500 uppercase font-medium">
+              <span className="shrink-0">End State</span>
+              <div className="flex items-center gap-1 bg-neutral-800 rounded px-1.5 py-0.5 border border-neutral-700 shrink-0">
                 <input 
                   type="number"
                   value={values[1]}
